@@ -63,9 +63,9 @@ TOOL_HANDLERS = {
 }
 
 TOOLS = [
-    {"name": "calculator", "description": "一种安全的方式来计算数学表达式。", "input_schema":{"type": "object", "properties": {"expression": "string", "required": ["expression"]}}},
-    {"name": "get_current_time", "description": "一个返回当前时间的工具", "input_schema": {"type": "undefined"}},
-    {"name": "TODO", "description": "一个待办任务列表，列出完成prompt任务需要的执行步骤，", "input_schema": {"type": "object", "properties": {"todo_list": "list","properties": {"id": "string", "text": "string", "status": ["pending", "progress","completed"]}, "required": ["todo_list"]}}}
+    {"name": "calculator", "description": "一种安全的方式来计算数学表达式。", "input_schema":{"type": "object", "properties": {"expression": {"type": "string","description": "要计算的数学表达式，如 '2+3*4'"}, "required": ["expression"]}}},
+    {"name": "get_current_time", "description": "一个返回当前时间的工具", "input_schema": {"type": "object","properties":{},"requires":[]}},
+    {"name": "TODO", "description": "一个待办任务列表，列出完成prompt任务需要的执行步骤，", "input_schema": {"type": "object", "properties": {"todo_list": {"type": "array","properties": {"id": "string", "text": "string", "status": ["pending", "progress","completed"]}, "required": ["todo_list"]}}}}
 ]
 
 # -- Agent loop with nag reminder injection --
@@ -73,12 +73,12 @@ def agent_loop(messages: list):
     round_since_todo = 0
     while True:
         response = client.messages.create(model=MODEL,messages=messages,system=SYSTEM,tools=TOOLS,max_tokens=8000,)
-        messages.append({"role":"assiant","content":response.content})
+        messages.append({"role":"assistant","content":response.content})
         if(response.stop_reason != "tool_use"):
             return
         results = []
         use_todo = False
-        for block in response_content:
+        for block in response.content:
             if block.type == 'tool_use':
                 handler = TOOL_HANDLERS.get(block.name)
                 try:
@@ -112,6 +112,6 @@ if __name__ == "__main__":
         if isinstance(response_content,list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block["text"])
+                    print(f"{block.text}")
         print()
         
