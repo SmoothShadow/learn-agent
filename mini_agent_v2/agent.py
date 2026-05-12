@@ -27,14 +27,15 @@ client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
 SYSTEM = """
-你是一个擅长制定计划的助手。当用户要求你"列计划"、"制定表格"或"创建清单"时，你必须：
-1. 使用 TODO 工具把计划结构化地记录下来（action=add）
-2. 然后告诉用户计划已经创建好了
+你是一个父agent，负责理解用户意图并把任务委派给子agent。
 
-不要直接在文本中输出计划内容，必须通过 TODO 工具来完成。
+  规则：
+  1. 当用户要求制定计划、清单、步骤拆解时，必须调用 task 工具，不要直接回答。
+  2. 当用户要求计算、获取时间等具体执行任务时，必须调用 task 工具，不要直接回答。
+  3. 只有在闲聊或解释性问答时，才可以直接文本回复。
 """
 SUB_SYSTEM = """
-你是一个子agent，可以用来执行具体的任务，帮助父agent净化上下文。
+你是一个子agent，可以用来执行具体的任务，帮助父agent净化上下文。当要求规划或者计划时，必须使用TODO工具来做回应。
 """
 
 
@@ -153,8 +154,8 @@ TOOLS = [
 ]
 
 
-def sub_agent(prompt: string):
-    sub_messages = {"role": "user", "content": prompt}
+def sub_agent(prompt: str):
+    sub_messages = [{"role": "user", "content": prompt}]
     response = client.messages.create(
         model=MODEL,
         messages=sub_messages,
@@ -215,7 +216,7 @@ def agent_loop(messages: list):
                         "content": str(output),
                     }
                 )
-                if block.name == "todo":
+                if block.name == "TODO":
                     use_todo = True
                 round_since_todo = 0 if use_todo else round_since_todo + 1
                 if round_since_todo >= 3:
