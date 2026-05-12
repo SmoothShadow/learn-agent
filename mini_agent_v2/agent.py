@@ -2,6 +2,7 @@
 # Harness: the loop -- the model's first connection to the real world.
 
 import os
+from re import sub
 from tools import calculator, get_current_time
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -31,6 +32,9 @@ SYSTEM = """
 2. 然后告诉用户计划已经创建好了
 
 不要直接在文本中输出计划内容，必须通过 TODO 工具来完成。
+"""
+SUB_SYSTEM = """
+你是一个子agent，可以用来执行具体的任务，帮助父agent净化上下文。
 """
 
 
@@ -71,12 +75,12 @@ class TODO_MANAGER:
 
 TODO = TODO_MANAGER()
 
-TOOL_HANDLERS = {
+SUB_TOOL_HANDLERS = {
     "calculator": lambda **kw: calculator(kw["expression"]),
     "get_current_time": lambda: get_current_time(),
     "TODO": lambda **kw: TODO.update(kw["todo_list"]),
 }
-TOOLS = [
+SUB_TOOLS = [
     {
         "name": "calculator",
         "description": "一种安全的方式来计算数学表达式。",
@@ -126,6 +130,55 @@ TOOLS = [
         },
     },
 ]
+
+TOOL_HANDLERS = {
+    "task": lambda **kw: sub_agent(prompt=kw["prompt"]),
+}
+
+TOOLS = [
+    {
+        "name": "task",
+        "description": "一个子agent,可以用来执行具体的任务,帮助父agent净化上下文",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "给子agent执行任务的提示词模板",
+                }
+            },
+            "required": ["prompt"],
+        },
+    }
+]
+
+
+def sub_agent(prompt: string):
+    sub_messages = {"role": "user", "content": prompt}
+    response = client.messages.create(
+        model=MODEL,
+        messages=sub_messages,
+        system=SUB_SYSTEM,
+        tools=SUB_TOOLS,
+        max_tokens=8000,
+    )
+    sub_messages.append({"role": "assistant", "content": response.content})
+    result = []
+    for block in response.content:
+        if block.type == "tool_use":
+            handler = SUB_TOOL_HANDLERS.get(block.name)
+            if handler:
+                result.append(
+                    {
+                        "type": "tool_result",
+                        "tool_result_id": block.id,
+                        "content": str(handler(**block.input))[:5000],
+                    }
+                )
+    sub_messages.append({"role": "user", "content": result})
+    return (
+        "".join(b.text for b in response.content if hasattr(b, "text")) or "no summary"
+    )
 
 
 # -- Agent loop with nag reminder injection --
