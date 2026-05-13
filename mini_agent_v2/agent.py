@@ -134,6 +134,7 @@ SUB_TOOLS = [
 
 TOOL_HANDLERS = {
     "task": lambda **kw: sub_agent(prompt=kw["prompt"]),
+    "TODO": lambda **kw: TODO.update(kw["todo_list"]),
 }
 
 TOOLS = [
@@ -150,33 +151,59 @@ TOOLS = [
             },
             "required": ["prompt"],
         },
-    }
+    },
+    {
+        "name": "TODO",
+        "description": "一个待办任务列表，列出完成prompt任务需要的执行步骤",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "todo_list": {
+                    "type": "array",
+                    "items": {  # ✅ 数组用 items 定义子元素结构
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "text": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "progress", "completed"],
+                            },
+                        },
+                        "required": ["id", "text", "status"],
+                    },
+                }
+            },
+            "required": ["todo_list"],  # ✅ 与 type、properties 平级
+        },
+    },
 ]
 
 
 def sub_agent(prompt: str):
     sub_messages = [{"role": "user", "content": prompt}]
-    response = client.messages.create(
-        model=MODEL,
-        messages=sub_messages,
-        system=SUB_SYSTEM,
-        tools=SUB_TOOLS,
-        max_tokens=8000,
-    )
-    sub_messages.append({"role": "assistant", "content": response.content})
-    result = []
-    for block in response.content:
-        if block.type == "tool_use":
-            handler = SUB_TOOL_HANDLERS.get(block.name)
-            if handler:
-                result.append(
-                    {
-                        "type": "tool_result",
-                        "tool_result_id": block.id,
-                        "content": str(handler(**block.input))[:5000],
-                    }
-                )
-    sub_messages.append({"role": "user", "content": result})
+    for _ in range(30):
+        response = client.messages.create(
+            model=MODEL,
+            messages=sub_messages,
+            system=SUB_SYSTEM,
+            tools=SUB_TOOLS,
+            max_tokens=8000,
+        )
+        sub_messages.append({"role": "assistant", "content": response.content})
+        result = []
+        for block in response.content:
+            if block.type == "tool_use":
+                handler = SUB_TOOL_HANDLERS.get(block.name)
+                if handler:
+                    result.append(
+                        {
+                            "type": "tool_result",
+                            "tool_result_id": block.id,
+                            "content": str(handler(**block.input))[:5000],
+                        }
+                    )
+        sub_messages.append({"role": "user", "content": result})
     return (
         "".join(b.text for b in response.content if hasattr(b, "text")) or "no summary"
     )
