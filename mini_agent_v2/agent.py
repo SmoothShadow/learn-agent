@@ -2,10 +2,17 @@
 # Harness: the loop -- the model's first connection to the real world.
 
 import os
+import sys
+from pathlib import Path
 from re import sub
-from tools import calculator, get_current_time
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools import calculator, get_current_time
 
 try:
     import readline
@@ -18,7 +25,7 @@ try:
 except ImportError:
     print("Module readline not available.")
 
-load_dotenv(override=True)
+load_dotenv(ROOT / ".env", override=True)
 
 if not os.getenv("ANTHROPIC_API_KEY"):
     os.environ.pop("ANTHROPIC_API_TOKEN", None)
@@ -192,21 +199,32 @@ def sub_agent(prompt: str):
         )
         sub_messages.append({"role": "assistant", "content": response.content})
         result = []
+        print("DEBUG: response.stop_reason =", response.stop_reason)  # 新增1
         for block in response.content:
+            print(f"DEBUG: block.type = {block.type}")  # 新增2
             if block.type == "tool_use":
+                print(f"DEBUG: 子代理想调用的工具名 = {repr(block.name)}")  # 新增3
                 handler = SUB_TOOL_HANDLERS.get(block.name)
                 if handler:
                     result.append(
                         {
                             "type": "tool_result",
-                            "tool_result_id": block.id,
+                            "tool_use_id": block.id,
                             "content": str(handler(**block.input))[:5000],
                         }
                     )
-        sub_messages.append({"role": "user", "content": result})
-    return (
-        "".join(b.text for b in response.content if hasattr(b, "text")) or "no summary"
-    )
+                else:
+                    return f"错误：子代理遇到了未知工具 '{block.name}'，无法执行。"
+        if result:
+            sub_messages.append({"role": "user", "content": result})
+            continue
+        if response.stop_reason == "tool_use":
+            return "错误：子代理请求使用工具，但没有可用的工具处理程序。"
+        return (
+            "".join(b.text for b in response.content if hasattr(b, "text"))
+            or "no summary"
+        )
+    return "错误：子代理执行轮次超限。"
 
 
 # -- Agent loop with nag reminder injection --
@@ -255,7 +273,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
-            query = input("\033[35ms01-s03>>> \033[0m")
+            query = input("\033[35ms04>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break

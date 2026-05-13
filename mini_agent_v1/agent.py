@@ -3,8 +3,15 @@
 
 import os
 from tools import calculator, get_current_time
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 try:
     import readline
@@ -17,7 +24,7 @@ try:
 except ImportError:
     print("Module readline not available.")
 
-load_dotenv(override=True)
+load_dotenv(ROOT / ".env", override=True)
 
 if not os.getenv("ANTHROPIC_API_KEY"):
     os.environ.pop("ANTHROPIC_API_TOKEN", None)
