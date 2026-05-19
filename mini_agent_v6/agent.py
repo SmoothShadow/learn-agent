@@ -580,6 +580,32 @@ TOOLS = [
 ]
 
 
+def printToolName(payload: dict):
+    print(f"Tool name: {payload["tool_name"]}")
+    return {"exitCode": 0, "message": "tool name printed"}
+
+
+def printToolOutput(payload: dict):
+    print(f"Tool output: {payload["tool_output"]}")
+    return {"exitCode": 0, "message": "tool output printed"}
+
+
+HOOKS = {
+    "SessionStart": [printToolName],
+    "PreToolUse": [printToolName],
+    "PostToolUse": [printToolOutput],
+}
+
+
+def run_hooks(event: str, payload: dict):
+    if event in HOOKS:
+        for handler in HOOKS[event]:
+            result = handler(payload)
+            if result.get("exitCode", 1) in (1, 2):
+                return result
+    return {"exitCode": 0, "message": "no hooks or all passed"}
+
+
 def sub_agent(prompt: str):
     sub_messages = [{"role": "user", "content": prompt}]
     for _ in range(30):
@@ -660,6 +686,23 @@ def agent_loop(messages: list, perms: PermissionManager):
         manual_compact = False
         for block in response.content:
             if block.type == "tool_use":
+
+                # PreToolUse hook
+                hook_result = run_hooks(
+                    "PreToolUse", {"tool_name": block.name, "tool_input": block.input}
+                )
+                if hook_result["exitCode"] == 1:
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": str(hook_result["message"]),
+                        }
+                    )
+                    continue
+                if hook_result["exitCode"] == 2:
+                    messages.append({"role": "user", "content": hook_result["message"]})
+
                 if block.name == "compact":
                     manual_compact = True
                     print("压缩中·······")
@@ -683,6 +726,22 @@ def agent_loop(messages: list, perms: PermissionManager):
                             "content": str(output),
                         }
                     )
+
+                    print(f"Tool output: {str(output)}")
+                    # PostToolUse hook
+                    hook_result = run_hooks(
+                        "PreToolUse",
+                        {
+                            "tool_name": block.name,
+                            "tool_input": block.input,
+                            "tool_output": str(output),
+                        },
+                    )
+                    if hook_result["exitCode"] == 2:
+                        messages.append(
+                            {"role": "user", "content": hook_result["message"]}
+                        )
+
                 if state["round_since_todo"] >= 3:
                     results.append({"type": "text", "text": "更新你的todo list"})
         messages.append({"role": "user", "content": results})
@@ -693,6 +752,9 @@ def agent_loop(messages: list, perms: PermissionManager):
 
 
 if __name__ == "__main__":
+    # Fire SessionStart hooks
+    run_hooks("SessionStart", {"tool_name": "", "tool_input": {}})
+
     # Choose permission mode at startup
     print("Permission modes: default, plan, auto")
     mode_input = input("Mode (default): ").strip().lower() or "default"
@@ -705,7 +767,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
-            query = input("\033[35ms07 Permission Manager>>> \033[0m")
+            query = input("\033[35ms08 Hook System>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
