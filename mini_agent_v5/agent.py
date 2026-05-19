@@ -3,7 +3,7 @@
 
 import json
 import time
-import fnmatch
+from fnmatch import fnmatch
 import os
 import sys
 from pathlib import Path
@@ -58,7 +58,7 @@ def micro_compact(messages: list) -> list:
     tool_result = []
     for msg_idx, msg in enumerate(messages):
         if msg.get("role") == "user":
-            content = msg.get("content", "content")
+            content = msg.get("content", [])
             if isinstance(content, list):
                 for part_idx, part in enumerate(content):
                     if isinstance(part, dict) and part.get("type") == "tool_result":
@@ -85,7 +85,7 @@ def micro_compact(messages: list) -> list:
         ):
             continue
         tool_id = result.get("tool_use_id", "")
-        tool_name = result.get("tool_name", "")
+        tool_name = result.get("tool_name", tool_name_map.get(tool_id, ""))
         if tool_name in PRESERVE_RESULT_TOOLS:
             continue
         result["content"] = f"[Previous: used {tool_name}]"
@@ -103,7 +103,7 @@ def auto_compact(messages: list) -> list:
 
     # Ask LLM to summarize
     conversation_text = json.dumps(messages, default=str)[-80000:]
-    response = client.create(
+    response = client.messages.create(
         model=MODEL,
         messages=[
             {
@@ -113,7 +113,9 @@ def auto_compact(messages: list) -> list:
         ],
         max_tokens=2000,
     )
-    summary = next((block.text for block in response if hasattr(block, "text")), "")
+    summary = next(
+        (block.text for block in response.content if hasattr(block, "text")), ""
+    )
     print(f"Summary: {summary}")
     if not summary:
         summary = "暂无总结。"
@@ -367,7 +369,7 @@ class PermissionManager:
         # Step 4: Ask user (default behavior for unmatched tools)
         return {
             "behavior": "ask",
-            "reason": "No matching rule found for {tool_name}, ask user",
+            "reason": f"No matching rule found for {tool_name}, ask user",
         }
 
     def ask_user(self, tool_name: str, tool_input: dict) -> bool:
@@ -382,6 +384,7 @@ class PermissionManager:
         if answer == "always":
             self.rules.append({"tool": tool_name, "path": "*", "behavior": "allow"})
             self.consecutive_denials = 0
+            return True
         elif answer in ("y", "yes"):
             self.consecutive_denials = 0
             return True
@@ -579,11 +582,8 @@ def sub_agent(prompt: str):
         )
         sub_messages.append({"role": "assistant", "content": response.content})
         result = []
-        print("DEBUG: response.stop_reason =", response.stop_reason)  # 新增1
         for block in response.content:
-            print(f"DEBUG: block.type = {block.type}")  # 新增2
             if block.type == "tool_use":
-                print(f"DEBUG: 子代理想调用的工具名 = {repr(block.name)}")  # 新增3
                 handler = SUB_TOOL_HANDLERS.get(block.name)
                 if handler:
                     result.append(
