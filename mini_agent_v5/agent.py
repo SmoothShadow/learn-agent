@@ -2,6 +2,8 @@
 # Harness: the loop -- the model's first connection to the real world.
 
 import json
+import time
+import fnmatch
 import os
 import sys
 from pathlib import Path
@@ -59,7 +61,7 @@ def micro_compact(messages: list) -> list:
             content = msg.get("content", "content")
             if isinstance(content, list):
                 for part_idx, part in enumerate(content):
-                    if isinstace(part, dict) and part.get("type") == "tool_result":
+                    if isinstance(part, dict) and part.get("type") == "tool_result":
                         tool_result.append((msg_idx, part_idx, part))
     if len(tool_result) < KEEP_RECENT:
         return messages
@@ -93,7 +95,7 @@ def micro_compact(messages: list) -> list:
 # -- Layer 2: auto_compact - save transcript, summarize, replace messages --
 def auto_compact(messages: list) -> list:
     # Save full transcript to disk
-    TRANSCRIPT_DIR.mkdir(exit_ok=True)
+    TRANSCRIPT_DIR.mkdir(exist_ok=True)
     transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.json"
     with open(transcript_path, "w") as f:
         for msg in messages:
@@ -162,7 +164,6 @@ class TODO_MANAGER:
 
 TODO = TODO_MANAGER()
 
-
 WORK_DIR = Path(__file__).resolve().parent.parent
 SKILLS_DIR = WORK_DIR / "skills"
 
@@ -224,6 +225,194 @@ Skills available:
 print("=== SKILLS ===")
 print(SKILL_LOADER.get_descriptions())
 print("==============")
+
+MODES = ["auto", "plan", "default"]
+
+READ_ONLY_TOOLS = {"read_file", "bash_readonly"}
+
+# Tools that modify state
+WRITE_TOOLS = {"write_file", "edit_file", "bash"}
+
+
+# -- Bash security validation --
+class BashSecurityValidator:
+    """
+    Validate bash commands for obviously dangerous patterns.
+
+    The teaching version deliberately keeps this small and easy to read.
+    First catch a few high-risk patterns, then let the permission pipeline
+    decide whether to deny or ask the user.
+    """
+
+    VALIDATORS = [
+        ("shell_metachar", r"[;&|`$]"),  # shell metacharacters
+        ("sudo", r"\bsudo\b"),  # privilege escalation
+        ("rm_rf", r"\brm\s+(-[a-zA-Z]*)?r"),  # recursive delete
+        ("cmd_substitution", r"\$\("),  # command substitution
+        ("ifs_injection", r"\bIFS\s*="),  # IFS manipulation
+    ]
+
+    def validate(self, command: str) -> list:
+        """
+        Check a bash command against all validators.
+
+        Returns list of (validator_name, matched_pattern) tuples for failures.
+        An empty list means the command passed all validators.
+        """
+        failures = []
+        for name, pattern in self.VALIDATORS:
+            if re.search(pattern, command):
+                failures.append((name, pattern))
+        return failures
+
+    def is_safe(self, command: str) -> bool:
+        """Convenience: returns True only if no validators triggered."""
+        return len(self.validate(command)) == 0
+
+    def describe_failures(self, command: str) -> str:
+        """Human-readable summary of validation failures."""
+        failures = self.validate(command)
+        if not failures:
+            return "No security issues detected."
+        parts = [f"{name}(pattern:{pattern})" for name, pattern in failures]
+        return "Security flags: " + ", ".join(parts)
+
+
+# Singleton validator instance used by the permission pipeline
+bash_validator = BashSecurityValidator()
+
+# -- Permission rules --
+# Rules are checked in order: first match wins.
+# Format: {"tool": "<tool_name_or_*>", "path": "<glob_or_*>", "behavior": "allow|deny|ask"}
+DEFAULT_RULES = [
+    # Always deny dangerous patterns
+    {"tool": "bash", "content": "rm -rf /", "behavior": "deny"},
+    {"tool": "bash", "content": "sudo *", "behavior": "deny"},
+    # Allow reading anything
+    {"tool": "read_file", "path": "*", "behavior": "allow"},
+]
+
+
+class PermissionManager:
+    """
+    Manages permission decisions for tool calls.
+
+    Pipeline: deny_rules -> mode_check -> allow_rules -> ask_user
+
+    The teaching version keeps the decision path short on purpose so readers
+    can implement it themselves before adding more advanced policy layers.
+    """
+
+    def __init__(self, mode: str = "default", rules: list = None):
+        if mode not in MODES:
+            raise ValueError(f"Invalid mode: {mode}")
+        self.mode = mode
+        self.rules = rules or list(DEFAULT_RULES)
+        # Simple denial tracking helps surface when the agent is repeatedly
+        # asking for actions the system will not allow.
+        self.consecutive_denials = 0
+        self.max_consecutive_denials = 3
+
+    def check(self, tool_name: str, tool_input: dict) -> dict:
+        """
+        Returns: {"behavior": "allow"|"deny"|"ask", "reason": str}
+        """
+        # Step 0: Bash security validation (before deny rules)
+        # Teaching version checks early for clarity.
+        if tool_name == "bash":
+            command = tool_input.get("command", "")
+            failures = bash_validator.validate(command)
+            if failures:
+                serve = {"sudo", "rm -rf"}
+                serve_hits = [f for f in failures if f[0] in serve]
+                if serve_hits:
+                    return {
+                        "behavior": "deny",
+                        "reason": "Security violation: "
+                        + ", ".join([f[1] for f in serve_hits]),
+                    }
+                desc = bash_validator.describe_failures(command)
+                return {"behavior": "ask", "reason": "Bash validation failed: " + desc}
+        # Step 1: Deny rules (bypass-immune, checked first always)
+        for rule in self.rules:
+            if rule.get("behavior") != "deny":
+                continue
+            if self._matches(rule, tool_name, tool_input):
+                return {"behavior": "deny", "reason": f"Blocked by deny rule: {rule}"}
+
+        # Step 2: Mode-based decisions
+        if self.mode == "plan":
+            # Plan mode: deny all write operations, allow reads
+            if tool_name in WRITE_TOOLS:
+                return {
+                    "behavior": "deny",
+                    "reason": "Plan mode: write operations not allowed",
+                }
+            return {"behavior": "allow", "reason": "Plan mode: read operations allowed"}
+
+        if self.mode == "auto":
+            # Auto mode: auto-allow read-only tools, ask for writes
+            if tool_name in READ_ONLY_TOOLS or tool_name == "read_files":
+                return {
+                    "behavior": "allow",
+                    "reason": "Auto mode: read-only tools allowed",
+                }
+            pass
+        # Step 3: Allow rules
+        for rule in self.rules:
+            if rule.get("behavior") != "allow":
+                continue
+            if self._matches(rule, tool_name, tool_input):
+                return {"behavior": "allow", "reason": f"Allowed by allow rule: {rule}"}
+        # Step 4: Ask user (default behavior for unmatched tools)
+        return {
+            "behavior": "ask",
+            "reason": "No matching rule found for {tool_name}, ask user",
+        }
+
+    def ask_user(self, tool_name: str, tool_input: dict) -> bool:
+        """Interactive approval prompt. Returns True if approved."""
+        preview = json.dumps(tool_input, ensure_ascii=False)[:200]
+        print(f"\n [Permission] {tool_name}: {preview}")
+        try:
+            answer = input("  Allow? (y/n/always): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+
+        if answer == "always":
+            self.rules.append({"tool": tool_name, "path": "*", "behavior": "allow"})
+            self.consecutive_denials = 0
+        elif answer in ("y", "yes"):
+            self.consecutive_denials = 0
+            return True
+
+        self.consecutive_denials += 1
+        if self.consecutive_denials >= self.max_consecutive_denials:
+            print(
+                f"  [{self.consecutive_denials} consecutive denials -- "
+                "consider switching to plan mode]"
+            )
+            self.mode = "plan"
+        return False
+
+    def _matches(self, rule: dict, tool_name: str, tool_input: dict) -> bool:
+        """Check if a rule matches the tool call."""
+        # Tool name match
+        if rule.get("tool") and rule["tool"] != "*":
+            if rule["tool"] != tool_name:
+                return False
+        # Path pattern match
+        if "path" in rule and rule["path"] != "*":
+            path = tool_input.get("path", "")
+            if not fnmatch(path, rule["path"]):
+                return False
+        # Content pattern match (for bash commands)
+        if "content" in rule:
+            command = tool_input.get("command", "")
+            if not fnmatch(command, rule["content"]):
+                return False
+        return True
+
 
 SUB_TOOL_HANDLERS = {
     "calculator": lambda **kw: calculator(kw["expression"]),
@@ -418,9 +607,30 @@ def sub_agent(prompt: str):
     return "错误：子代理执行轮次超限。"
 
 
+def tool_handler(block: dict, state: dict) -> str:
+    handler = TOOL_HANDLERS.get(block.name)
+    try:
+        output = handler(**block.input) if handler else f"未知的工具{block.name}"
+    except Exception as e:
+        output = f"error:{e}"
+    print(f"> {block.name}:")
+    print(str(output)[:200])
+    if block.name == "TODO":
+        state["use_todo"] = True
+    else:
+        state["use_todo"] = False
+    state["round_since_todo"] = (
+        0 if state["use_todo"] else state["round_since_todo"] + 1
+    )
+    return str(output)
+
+
 # -- Agent loop with nag reminder injection --
-def agent_loop(messages: list):
-    round_since_todo = 0
+def agent_loop(messages: list, perms: PermissionManager):
+    state = {
+        "use_todo": False,
+        "round_since_todo": 0,
+    }
     while True:
         micro_compact(messages)
         if estimate_tokens(messages) > THRESHOLD:
@@ -437,7 +647,6 @@ def agent_loop(messages: list):
         if response.stop_reason != "tool_use":
             return
         results = []
-        use_todo = False
         manual_compact = False
         for block in response.content:
             if block.type == "tool_use":
@@ -445,17 +654,18 @@ def agent_loop(messages: list):
                     manual_compact = True
                     print("压缩中·······")
                 else:
-                    handler = TOOL_HANDLERS.get(block.name)
-                    try:
-                        output = (
-                            handler(**block.input)
-                            if handler
-                            else f"未知的工具{block.name}"
-                        )
-                    except Exception as e:
-                        output = f"error:{e}"
-                    print(f"> {block.name}:")
-                    print(str(output)[:200])
+                    # -- Permission check --
+                    decision = perms.check(block.name, block.input or {})
+                    if decision["behavior"] == "deny":
+                        output = f"  [Permission] {block.name} denied"
+                    elif decision["behavior"] == "ask":
+                        if perms.ask_user(block.name, block.input or {}):
+                            output = tool_handler(block, state)
+                        else:
+                            output = f"Permission denied by user for {block.name}"
+                            print(f"  [USER DENIED] {block.name}")
+                    else:
+                        output = tool_handler(block, state)
                     results.append(
                         {
                             "type": "tool_result",
@@ -463,11 +673,8 @@ def agent_loop(messages: list):
                             "content": str(output),
                         }
                     )
-                    if block.name == "TODO":
-                        use_todo = True
-                    round_since_todo = 0 if use_todo else round_since_todo + 1
-                    if round_since_todo >= 3:
-                        results.append({"type": "text", "text": "更新你的todo list"})
+                if state["round_since_todo"] >= 3:
+                    results.append({"type": "text", "text": "更新你的todo list"})
         messages.append({"role": "user", "content": results})
         if manual_compact:
             print("[manual compact]")
@@ -476,18 +683,43 @@ def agent_loop(messages: list):
 
 
 if __name__ == "__main__":
+    # Choose permission mode at startup
+    print("Permission modes: default, plan, auto")
+    mode_input = input("Mode (default): ").strip().lower() or "default"
+    if mode_input not in MODES:
+        mode_input = "default"
+
+    perms = PermissionManager(mode=mode_input)
+    print(f"[Permission mode: {mode_input}]")
+
     history = []
     while True:
         try:
-            query = input("\033[35ms06>>> \033[0m")
+            query = input("\033[35ms07 Permission Manager>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
         if query.strip().lower() in ["exit", "quit", "q"]:
             print("\nGoodbye!")
             break
+
+        if query.startswith("/mode"):
+            parts = query.split()
+            if len(parts) == 2 and parts[1] in MODES:
+                perms.mode = parts[1]
+                print(f"[Switched to {parts[1]} mode]")
+            else:
+                print(f"Usage: /mode <{'|'.join(MODES)}>")
+            continue
+
+        # /rules command to show current rules
+        if query.strip() == "/rules":
+            for i, rule in enumerate(perms.rules):
+                print(f"  {i}: {rule}")
+            continue
+
         history.append({"role": "user", "content": query})
-        agent_loop(history)
+        agent_loop(history, perms)
         response_content = history[-1]["content"]
         if isinstance(response_content, list):
             for block in response_content:
