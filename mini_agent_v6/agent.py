@@ -727,10 +727,9 @@ def agent_loop(messages: list, perms: PermissionManager):
                         }
                     )
 
-                    print(f"Tool output: {str(output)}")
                     # PostToolUse hook
                     hook_result = run_hooks(
-                        "PreToolUse",
+                        "PostToolUse",
                         {
                             "tool_name": block.name,
                             "tool_input": block.input,
