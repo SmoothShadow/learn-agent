@@ -1,9 +1,209 @@
 # tools.py
 import subprocess
 import math
+from collections.abc import Callable
 from pathlib import Path
+from todo_manager import TODO_MANAGER
+from Skill import SKILL_REGISTRY
+from MemoryManager import MemoryManager
 
 WORKDIR = Path.cwd()
+
+
+TOOLS = [
+    {
+        "name": "bash",
+        "description": "Run a shell command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "task",
+        "description": "一个子agent,可以用来执行具体的任务,帮助父agent净化上下文",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "给子agent执行任务的提示词模板",
+                }
+            },
+            "required": ["prompt"],
+        },
+    },
+    {
+        "name": "TODO",
+        "description": "一个待办任务列表，列出完成prompt任务需要的执行步骤",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "todo_list": {
+                    "type": "array",
+                    "items": {  # ✅ 数组用 items 定义子元素结构
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "text": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "progress", "completed"],
+                            },
+                        },
+                        "required": ["id", "text", "status"],
+                    },
+                }
+            },
+            "required": ["todo_list"],  # ✅ 与 type、properties 平级
+        },
+    },
+    {
+        "name": "skill",
+        "description": "获取技能详情",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "技能名称",
+                }
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "compact",
+        "description": "compress messages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "focus": {
+                    "type": "string",
+                    "description": "What to preserve in the summary",
+                }
+            },
+        },
+    },
+    {
+        "name": "save_memory",
+        "description": "保存跨会话仍然有价值的非显示信息",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "记忆名称"},
+                "description": {
+                    "type": "string",
+                    "description": "关于本段记忆的简要描述",
+                },
+                "mem_type": {
+                    "type": "string",
+                    "enum": ["user", "feedback", "project", "reference"],
+                    "description": "user=preferences, feedback=corrections, project=non-obvious project conventions or decision reasons, reference=external resource pointers",
+                },
+                "content": {"type": "string", "description": "记忆详细内容"},
+            },
+        },
+    },
+]
+
+SUB_TOOLS = [
+    {
+        "name": "calculator",
+        "description": "一种安全的方式来计算数学表达式。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "要计算的数学表达式，如 '2+3*4'",
+                }
+            },
+            "required": ["expression"],  # ✅ 与 type、properties 平级
+        },
+    },
+    {
+        "name": "get_current_time",
+        "description": "一个返回当前时间的工具",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],  # ✅ 是 required，不是 requires
+        },
+    },
+    {
+        "name": "TODO",
+        "description": "一个待办任务列表，列出完成prompt任务需要的执行步骤",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "todo_list": {
+                    "type": "array",
+                    "items": {  # ✅ 数组用 items 定义子元素结构
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "text": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "progress", "completed"],
+                            },
+                        },
+                        "required": ["id", "text", "status"],
+                    },
+                }
+            },
+            "required": ["todo_list"],  # ✅ 与 type、properties 平级
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["path"],
+        },
+    },
+]
+
+
+def build_tool_handlers(
+    sub_agent: Callable[[str], str],
+    TODO: TODO_MANAGER,
+    skill_loader: SKILL_REGISTRY,
+    memory_mgr: MemoryManager,
+) -> dict[str, Callable[..., str]]:
+    return {
+        "bash": lambda **kw: run_bash(kw["command"]),
+        "task": lambda **kw: sub_agent(prompt=kw["prompt"]),
+        "TODO": lambda **kw: TODO.update(kw["todo_list"]),
+        "skill": lambda **kw: skill_loader.get_content(kw["name"]),
+        "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
+        "compact": lambda **kw: "Manual compression requested.",
+        "save_memory": lambda **kw: memory_mgr.save_memory(
+            kw["name"], kw["description"], kw["mem_type"], kw["content"]
+        ),
+    }
+
+
+def build_sub_tool_handlers(TODO: TODO_MANAGER) -> dict[str, Callable[..., str]]:
+    return {
+        "calculator": lambda **kw: calculator(kw["expression"]),
+        "get_current_time": lambda: get_current_time(),
+        "TODO": lambda **kw: TODO.update(kw["todo_list"]),
+        "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
+    }
 
 
 def safe_path(p: str) -> Path:

@@ -319,7 +319,7 @@ class MemoryManager:
         return result
 
 
-memory_mgr = MEMORY_MANAGER()
+memory_mgr = MemoryManager()
 
 
 class SKILL_REGISTRY:
