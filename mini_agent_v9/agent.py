@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
-from anthropic import Anthropic
+from anthropic import Anthropic, APIError
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +21,7 @@ from Skill import SkillConfig, SKILL_REGISTRY
 from BashSecurityValidator import BashSecurityValidator, BashSecurityValidatorConfig
 from PermissionManager import PermissionConfig, PermissionManager
 from SystemPromptBuild import SystemPromptConfig, SystemPromptBuilder
+from Recovery import Recovery, RecoveryConfig
 
 try:
     import readline
@@ -109,6 +110,9 @@ DEFAULT_RULES = [
 MODES = ["auto", "plan", "default"]
 
 READ_ONLY_TOOLS = {"read_file", "bash_readonly"}
+
+# 错误恢复
+recovery = Recovery(RecoveryConfig())
 
 # Tools that modify state
 WRITE_TOOLS = {"write_file", "edit_file", "bash"}
@@ -265,82 +269,118 @@ def agent_loop(messages: list, perms: PermissionManager):
         if compact.estimate_tokens(messages) > THRESHOLD:
             print("[auto_compact triggered]")
             messages[:] = compact.auto_compact(messages)
-        response = client.messages.create(
-            model=MODEL,
-            messages=messages,
-            system=system,
-            tools=TOOLS,
-            max_tokens=8000,
-        )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
-            return
-        results = []
-        manual_compact = False
-        for block in response.content:
-            if block.type == "tool_use":
-
-                # PreToolUse hook
-                hook_result = run_hooks(
-                    "PreToolUse", {"tool_name": block.name, "tool_input": block.input}
-                )
-                if hook_result["exitCode"] == 1:
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": str(hook_result["message"]),
-                        }
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                messages=messages,
+                system=system,
+                tools=TOOLS,
+                max_tokens=8000,
+            )
+            messages.append({"role": "assistant", "content": response.content})
+            if response.stop_reason == "max_tokens":
+                error_info = recovery.choose_recovery(response.stop_reason, "")
+                error_type = error_info.get("kind", "")
+                if error_type == "continue":
+                    print(error_info)
+                    messages[:] = recovery.recovery_handler(
+                        error_type,
+                        messages,
+                        compact,
+                        "",
                     )
                     continue
-                if hook_result["exitCode"] == 2:
-                    messages.append({"role": "user", "content": hook_result["message"]})
-
-                if block.name == "compact":
-                    manual_compact = True
-                    print("压缩中·······")
                 else:
-                    # -- Permission check --
-                    decision = perms.check(block.name, block.input or {})
-                    if decision["behavior"] == "deny":
-                        output = f"  [Permission] {block.name} denied"
-                    elif decision["behavior"] == "ask":
-                        if perms.ask_user(block.name, block.input or {}):
-                            output = tool_handler(block, state)
-                        else:
-                            output = f"Permission denied by user for {block.name}"
-                            print(f"  [USER DENIED] {block.name}")
-                    else:
-                        output = tool_handler(block, state)
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": str(output),
-                        }
-                    )
+                    print(error_info)
+                    break
+            recovery.reset_attempt()
+            if response.stop_reason != "tool_use":
+                return
+            results = []
+            manual_compact = False
+            for block in response.content:
+                if block.type == "tool_use":
 
-                    # PostToolUse hook
+                    # PreToolUse hook
                     hook_result = run_hooks(
-                        "PostToolUse",
-                        {
-                            "tool_name": block.name,
-                            "tool_input": block.input,
-                            "tool_output": str(output),
-                        },
+                        "PreToolUse",
+                        {"tool_name": block.name, "tool_input": block.input},
                     )
+                    if hook_result["exitCode"] == 1:
+                        results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": str(hook_result["message"]),
+                            }
+                        )
+                        continue
                     if hook_result["exitCode"] == 2:
                         messages.append(
                             {"role": "user", "content": hook_result["message"]}
                         )
 
-                if state["round_since_todo"] >= 3:
-                    results.append({"type": "text", "text": "更新你的todo list"})
-        messages.append({"role": "user", "content": results})
-        if manual_compact:
-            print("[manual compact]")
-            messages[:] = compact.auto_compact(messages)
-            return
+                    if block.name == "compact":
+                        manual_compact = True
+                        print("压缩中·······")
+                    else:
+                        # -- Permission check --
+                        decision = perms.check(block.name, block.input or {})
+                        if decision["behavior"] == "deny":
+                            output = f"  [Permission] {block.name} denied"
+                        elif decision["behavior"] == "ask":
+                            if perms.ask_user(block.name, block.input or {}):
+                                output = tool_handler(block, state)
+                            else:
+                                output = f"Permission denied by user for {block.name}"
+                                print(f"  [USER DENIED] {block.name}")
+                        else:
+                            output = tool_handler(block, state)
+                        results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": str(output),
+                            }
+                        )
+
+                        # PostToolUse hook
+                        hook_result = run_hooks(
+                            "PostToolUse",
+                            {
+                                "tool_name": block.name,
+                                "tool_input": block.input,
+                                "tool_output": str(output),
+                            },
+                        )
+                        if hook_result["exitCode"] == 2:
+                            messages.append(
+                                {"role": "user", "content": hook_result["message"]}
+                            )
+
+                    if state["round_since_todo"] >= 3:
+                        results.append({"type": "text", "text": "更新你的todo list"})
+            messages.append({"role": "user", "content": results})
+            if manual_compact:
+                print("[manual compact]")
+                messages[:] = compact.auto_compact(messages)
+                return
+        except (ConnectionError, TimeoutError, OSError, APIError) as e:
+            error_body = str(e).strip().lower()
+            error_info = recovery.choose_recovery("", error_body)
+            error_type = error_info.get("kind", "")
+            if error_type == "compact":
+                print(error_info)
+                messages[:] = recovery.recovery_handler(
+                    error_type, messages, compact, e
+                )
+                continue
+            if error_type == "retry":
+                print(recovery.recovery_handler(error_type, messages, compact, e))
+                continue
+            if error_type == "fail":
+                print(error_info)
+                break
 
 
 if __name__ == "__main__":
@@ -367,7 +407,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
-            query = input("\033[35ms10 system prompt>>> \033[0m")
+            query = input("\033[35ms11 error recovery>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
