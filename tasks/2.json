@@ -1,0 +1,12 @@
+{
+  "id": 2,
+  "subject": "学习HTTP协议基础",
+  "description": "了解HTTP协议的基本概念，包括请求方法(GET/POST/PUT/DELETE)、状态码、请求头、响应头等知识",
+  "blocks": [
+    4
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "completed",
+  "depends_on_subjects": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": 5,
+  "subject": "学习路径操作和路由",
+  "description": "掌握路径参数、查询参数、路径操作装饰器的使用，理解路由匹配规则",
+  "blocks": [
+    7,
+    9
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "in_progress",
+  "depends_on_subjects": [
+    "学习FastAPI基础概念"
+  ]
+}

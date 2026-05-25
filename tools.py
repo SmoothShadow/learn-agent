@@ -6,6 +6,7 @@ from pathlib import Path
 from todo_manager import TODO_MANAGER
 from Skill import SKILL_REGISTRY
 from MemoryManager import MemoryManager
+from TaskManager import TaskManager
 
 WORKDIR = Path.cwd()
 
@@ -115,6 +116,99 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "create_tasks",
+        "description": "创建一个包含依赖关系的较长任务列表，任务进度会写到文件中，防止程序意外退出后丢失进度",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subject": {"type": "string", "description": "任务主题"},
+                            "description": {
+                                "type": "string",
+                                "description": "任务描述",
+                            },
+                            "owner": {"type": "string", "description": "分配给谁执行"},
+                            "status": {
+                                "type": "string",
+                                "enum": [
+                                    "pending",
+                                    "in_progress",
+                                    "completed",
+                                    "deleted",
+                                ],
+                                "description": "当前状态",
+                            },
+                            "depends_on_subjects": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "依赖的任务主题列表",
+                            },
+                        },
+                    },
+                }
+            },
+            "required": ["subject", "description", "owner", "status"],
+        },
+    },
+    {
+        "name": "update_task",
+        "description": "更新文件夹中的任务列表的状态",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "int", "description": "任务id"},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed", "deleted"],
+                    "description": "任务状态",
+                },
+            },
+            "required": ["task_id", "status"],
+        },
+    },
+    {
+        "name": "get_task",
+        "description": "用任务id获取某个任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "int", "description": "任务id"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "load_all",
+        "description": "加载所有任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "clear_all",
+        "description": "任务全部完成时，清空所有任务json文件",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "is_ready",
+        "description": "根据任务id判断该任务是否可以开始",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "int", "description": "任务id"},
+            },
+            "required": ["task_id"],
+        },
+    },
 ]
 
 SUB_TOOLS = [
@@ -183,6 +277,7 @@ def build_tool_handlers(
     TODO: TODO_MANAGER,
     skill_loader: SKILL_REGISTRY,
     memory_mgr: MemoryManager,
+    task_manager: TaskManager,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -194,6 +289,14 @@ def build_tool_handlers(
         "save_memory": lambda **kw: memory_mgr.save_memory(
             kw["name"], kw["description"], kw["mem_type"], kw["content"]
         ),
+        "create_tasks": lambda **kw: task_manager.create_tasks(kw["tasks"]),
+        "update_task": lambda **kw: task_manager.update_task(
+            kw["task_id"], kw["status"]
+        ),
+        "get_task": lambda **kw: task_manager.get_task(kw["task_id"]),
+        "load_all": lambda **kw: task_manager.load_all(),
+        "clear_all": lambda **kw: task_manager.clear_all(),
+        "is_ready": lambda **kw: task_manager.is_ready(kw["task_id"]),
     }
 
 

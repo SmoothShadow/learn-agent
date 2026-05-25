@@ -1,0 +1,16 @@
+{
+  "id": 8,
+  "subject": "学习数据库集成",
+  "description": "学习如何将FastAPI与数据库集成，包括SQLAlchemy、MongoDB等常用数据库",
+  "blocks": [
+    11
+  ],
+  "blocked_by": [
+    6
+  ],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习Pydantic数据模型"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": 3,
+  "subject": "安装和配置FastAPI环境",
+  "description": "安装FastAPI和Uvicorn服务器，创建第一个Hello World应用，了解基本的项目结构",
+  "blocks": [
+    4
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "completed",
+  "depends_on_subjects": [
+    "学习Python基础"
+  ]
+}

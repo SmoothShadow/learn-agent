@@ -1,0 +1,15 @@
+{
+  "id": 6,
+  "subject": "学习Pydantic数据模型",
+  "description": "学习使用Pydantic定义请求体模型、响应模型，进行数据验证和序列化",
+  "blocks": [
+    7,
+    8
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习FastAPI基础概念"
+  ]
+}

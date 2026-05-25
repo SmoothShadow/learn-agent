@@ -1,0 +1,16 @@
+{
+  "id": 4,
+  "subject": "学习FastAPI基础概念",
+  "description": "理解FastAPI的核心概念：路径操作装饰器、路径参数、查询参数、请求体等",
+  "blocks": [
+    5,
+    6
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "completed",
+  "depends_on_subjects": [
+    "安装和配置FastAPI环境",
+    "学习HTTP协议基础"
+  ]
+}

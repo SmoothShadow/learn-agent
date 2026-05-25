@@ -1,0 +1,16 @@
+{
+  "id": 10,
+  "subject": "学习认证和授权",
+  "description": "学习JWT认证、OAuth2集成、用户权限控制等安全相关功能",
+  "blocks": [
+    11
+  ],
+  "blocked_by": [
+    7
+  ],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习依赖注入系统"
+  ]
+}

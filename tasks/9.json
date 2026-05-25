@@ -1,0 +1,16 @@
+{
+  "id": 9,
+  "subject": "学习中间件和异常处理",
+  "description": "掌握中间件的使用、CORS配置、异常处理和自定义错误响应",
+  "blocks": [
+    11
+  ],
+  "blocked_by": [
+    5
+  ],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习路径操作和路由"
+  ]
+}

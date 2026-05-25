@@ -1,0 +1,12 @@
+{
+  "id": 1,
+  "subject": "学习Python基础",
+  "description": "掌握Python基础语法、面向对象编程、异步编程(async/await)等核心概念，为学习FastAPI打下基础",
+  "blocks": [
+    3
+  ],
+  "blocked_by": [],
+  "owner": "学习者",
+  "status": "completed",
+  "depends_on_subjects": []
+}

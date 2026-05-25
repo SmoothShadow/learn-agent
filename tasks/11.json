@@ -1,0 +1,18 @@
+{
+  "id": 11,
+  "subject": "实践项目开发",
+  "description": "综合运用所学知识，开发一个完整的RESTful API项目，包括用户管理、数据CRUD操作等",
+  "blocks": [],
+  "blocked_by": [
+    8,
+    9,
+    10
+  ],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习数据库集成",
+    "学习中间件和异常处理",
+    "学习认证和授权"
+  ]
+}

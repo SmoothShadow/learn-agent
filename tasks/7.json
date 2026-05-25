@@ -1,0 +1,18 @@
+{
+  "id": 7,
+  "subject": "学习依赖注入系统",
+  "description": "理解FastAPI的依赖注入机制，学习如何创建和使用依赖项",
+  "blocks": [
+    10
+  ],
+  "blocked_by": [
+    5,
+    6
+  ],
+  "owner": "学习者",
+  "status": "pending",
+  "depends_on_subjects": [
+    "学习路径操作和路由",
+    "学习Pydantic数据模型"
+  ]
+}
