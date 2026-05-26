@@ -7,6 +7,7 @@ from todo_manager import TODO_MANAGER
 from Skill import SKILL_REGISTRY
 from MemoryManager import MemoryManager
 from TaskManager import TaskManager
+from BackgroundManager import BackgroundManager
 
 WORKDIR = Path.cwd()
 
@@ -149,10 +150,11 @@ TOOLS = [
                                 "description": "依赖的任务主题列表",
                             },
                         },
+                        "required": ["subject", "description", "owner", "status"],
                     },
-                }
+                },
             },
-            "required": ["subject", "description", "owner", "status"],
+            "required": ["tasks"],
         },
     },
     {
@@ -161,7 +163,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "int", "description": "任务id"},
+                "task_id": {"type": "integer", "description": "任务id"},
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "completed", "deleted"],
@@ -177,7 +179,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "int", "description": "任务id"},
+                "task_id": {"type": "integer", "description": "任务id"},
             },
             "required": ["task_id"],
         },
@@ -204,7 +206,48 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "int", "description": "任务id"},
+                "task_id": {"type": "integer", "description": "任务id"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "run_background",
+        "description": "在后台运行命令",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要运行的命令"},
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "get_notifications",
+        "description": "获取后台任务的通知",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "read_result",
+        "description": "读取后台任务的完整结果",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "任务id"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "read_task",
+        "description": "读取后台任务的状态",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "任务id"},
             },
             "required": ["task_id"],
         },
@@ -278,6 +321,7 @@ def build_tool_handlers(
     skill_loader: SKILL_REGISTRY,
     memory_mgr: MemoryManager,
     task_manager: TaskManager,
+    background_manager: BackgroundManager,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -297,6 +341,10 @@ def build_tool_handlers(
         "load_all": lambda **kw: task_manager.load_all(),
         "clear_all": lambda **kw: task_manager.clear_all(),
         "is_ready": lambda **kw: task_manager.is_ready(kw["task_id"]),
+        "run_background": lambda **kw: background_manager.run(kw["command"]),
+        "get_notifications": lambda **kw: background_manager.get_notifications(),
+        "read_result": lambda **kw: background_manager.read_result(kw["task_id"]),
+        "read_task": lambda **kw: background_manager.read_task(kw["task_id"]),
     }
 
 
