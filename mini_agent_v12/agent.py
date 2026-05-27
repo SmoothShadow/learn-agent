@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from anthropic import Anthropic, APIError
-import threading
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,7 +24,6 @@ from SystemPromptBuild import SystemPromptConfig, SystemPromptBuilder
 from Recovery import Recovery, RecoveryConfig
 from TaskManager import TaskManager, TaskManagerConfig
 from BackgroundManager import BackgroundManager, BackgroundManagerConfig
-from CronScheduler import CronScheduler, CronSchedulerConfig
 
 try:
     import readline
@@ -126,10 +124,6 @@ background_manager = BackgroundManager(
     BackgroundManagerConfig(work_dir=PROJECT_DIR / "background")
 )
 
-# 延时任务
-cron_scheduler = CronScheduler(CronSchedulerConfig(work_dir=PROJECT_DIR / "cron"))
-threading.Thread(target=cron_scheduler.check_loop, daemon=True).start()
-
 # Tools that modify state
 WRITE_TOOLS = {"write_file", "edit_file", "bash"}
 permission_config = PermissionConfig(
@@ -188,7 +182,6 @@ TOOL_HANDLERS = build_tool_handlers(
     memory_mgr=memory_mgr,
     task_manager=task_manager,
     background_manager=background_manager,
-    cron_scheduler=cron_scheduler,
 )
 
 
@@ -287,17 +280,6 @@ def agent_loop(messages: list, perms: PermissionManager):
     while True:
         # system = build_system_prompt()
         system = system_prompt_builder.build()
-
-        # cron
-        queue = cron_scheduler.get_queue()
-        for item in queue:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"[scheduled:{item['schedule_id']}] {item['prompt']}",
-                }
-            )
-        # notification
         notification = background_manager.get_notifications()
         notifications_text = "\n".join(
             f"type: {n['type']}; task_id: {n['task_id']}; status: {n['status']}; preview: {n['preview']}"
@@ -452,7 +434,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
-            query = input("\033[35ms13 background manager>>> \033[0m")
+            query = input("\033[35ms14 cron scheduler>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break

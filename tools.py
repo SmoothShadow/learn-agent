@@ -8,6 +8,7 @@ from Skill import SKILL_REGISTRY
 from MemoryManager import MemoryManager
 from TaskManager import TaskManager
 from BackgroundManager import BackgroundManager
+from CronScheduler import CronScheduler
 
 WORKDIR = Path.cwd()
 
@@ -252,6 +253,30 @@ TOOLS = [
             "required": ["task_id"],
         },
     },
+    {
+        "name": "create_schedule",
+        "description": "创建定时任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cron_expr": {
+                    "type": "string",
+                    "description": "cron表达式，如 '0 0 * * *'",
+                },
+                "prompt": {"type": "string", "description": "任务提示词"},
+                "recurring": {"type": "boolean", "description": "是否重复"},
+            },
+            "required": ["cron_expr", "prompt"],
+        },
+    },
+    {
+        "name": "get_queue",
+        "description": "获取定时任务队列",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 SUB_TOOLS = [
@@ -322,6 +347,7 @@ def build_tool_handlers(
     memory_mgr: MemoryManager,
     task_manager: TaskManager,
     background_manager: BackgroundManager,
+    cron_scheduler: CronScheduler,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -345,6 +371,10 @@ def build_tool_handlers(
         "get_notifications": lambda **kw: background_manager.get_notifications(),
         "read_result": lambda **kw: background_manager.read_result(kw["task_id"]),
         "read_task": lambda **kw: background_manager.read_task(kw["task_id"]),
+        "create_schedule": lambda **kw: cron_scheduler.create_schedule(
+            kw["cron_expr", kw["prompt"], kw["recurring"]]
+        ),
+        "get_queue": lambda **kw: cron_scheduler.get_queue(),
     }
 
 
