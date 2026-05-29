@@ -9,6 +9,8 @@ from MemoryManager import MemoryManager
 from TaskManager import TaskManager
 from BackgroundManager import BackgroundManager
 from CronScheduler import CronScheduler
+from MessageBus import MessageBus
+from TeammateManager import TeammateManager
 
 WORKDIR = Path.cwd()
 
@@ -83,6 +85,28 @@ TOOLS = [
             "type": "object",
             "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}},
             "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "edit_file",
+        "description": "Edit file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
+            },
+            "required": ["path", "old_text", "new_text"],
         },
     },
     {
@@ -277,9 +301,90 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "spawn_teammate",
+        "description": "创建团队成员",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "成员名称"},
+                "role": {"type": "string", "description": "成员角色"},
+                "prompt": {"type": "string", "description": "成员提示词"},
+            },
+            "required": ["name", "role", "prompt"],
+        },
+    },
+    {
+        "name": "send_message",
+        "description": "向指定成员发送消息",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "发送者名称"},
+                "to": {"type": "string", "description": "接收者名称"},
+                "content": {"type": "string", "description": "消息内容"},
+                "msg_type": {
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "broadcast",
+                        "shutdown_request",
+                        "shutdown_response",
+                        "plan_approval",
+                        "plan_approval_response",
+                    ],
+                    "description": "消息类型",
+                },
+                "extra": {"type": "object", "description": "额外信息"},
+            },
+            "required": ["sender", "to", "content", "msg_type"],
+        },
+    },
+    {
+        "name": "broadcast_teammates",
+        "description": "向所有成员广播消息",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "发送者名称"},
+                "content": {"type": "string", "description": "消息内容"},
+                "teammates": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "接收者名称列表",
+                },
+            },
+            "required": ["sender", "content", "teammates"],
+        },
+    },
+    {
+        "name": "list_teammates",
+        "description": "列出团队成员",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "member_names",
+        "description": "获取团队成员名称列表",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 SUB_TOOLS = [
+    {
+        "name": "bash",
+        "description": "Run a shell command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+    },
     {
         "name": "calculator",
         "description": "一种安全的方式来计算数学表达式。",
@@ -337,6 +442,28 @@ SUB_TOOLS = [
             "required": ["path"],
         },
     },
+    {
+        "name": "write_file",
+        "description": "Write file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "edit_file",
+        "description": "Edit file contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
+            },
+            "required": ["path", "old_text", "new_text"],
+        },
+    },
 ]
 
 
@@ -348,6 +475,8 @@ def build_tool_handlers(
     task_manager: TaskManager,
     background_manager: BackgroundManager,
     cron_scheduler: CronScheduler,
+    team_manager: TeammateManager,
+    message_bus: MessageBus,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -355,6 +484,8 @@ def build_tool_handlers(
         "TODO": lambda **kw: TODO.update(kw["todo_list"]),
         "skill": lambda **kw: skill_loader.get_content(kw["name"]),
         "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
+        "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
+        "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
         "compact": lambda **kw: "Manual compression requested.",
         "save_memory": lambda **kw: memory_mgr.save_memory(
             kw["name"], kw["description"], kw["mem_type"], kw["content"]
@@ -372,18 +503,32 @@ def build_tool_handlers(
         "read_result": lambda **kw: background_manager.read_result(kw["task_id"]),
         "read_task": lambda **kw: background_manager.read_task(kw["task_id"]),
         "create_schedule": lambda **kw: cron_scheduler.create_schedule(
-            kw["cron_expr", kw["prompt"], kw["recurring"]]
+            kw["cron_expr"], kw["prompt"], kw.get("recurring", False)
         ),
         "get_queue": lambda **kw: cron_scheduler.get_queue(),
+        "spawn_teammate": lambda **kw: team_manager.spawn(
+            kw["name"], kw["role"], kw["prompt"]
+        ),
+        "list_teammates": lambda **kw: team_manager.list_team(),
+        "send_message": lambda **kw: message_bus.send(
+            kw["sender"], kw["to"], kw["content"], kw["msg_type"], kw.get("extra")
+        ),
+        "broadcast_teammates": lambda **kw: message_bus.broadcast(
+            kw["sender"], kw["content"], kw["teammates"]
+        ),
+        "member_names": lambda **kw: team_manager.member_names(),
     }
 
 
 def build_sub_tool_handlers(TODO: TODO_MANAGER) -> dict[str, Callable[..., str]]:
     return {
+        "bash": lambda **kw: run_bash(kw["command"]),
         "calculator": lambda **kw: calculator(kw["expression"]),
         "get_current_time": lambda: get_current_time(),
         "TODO": lambda **kw: TODO.update(kw["todo_list"]),
         "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
+        "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
+        "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
     }
 
 
@@ -441,5 +586,27 @@ def run_read(path: str, limit: int = None) -> str:
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more)"]
         return "\n".join(lines)[:50000]
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_write(path: str, content: str) -> str:
+    try:
+        fp = safe_path(path)
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content)
+        return f"Wrote {len(content)} bytes"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_edit(path: str, old_text: str, new_text: str) -> str:
+    try:
+        fp = safe_path(path)
+        c = fp.read_text()
+        if old_text not in c:
+            return f"Error: Text not found in {path}"
+        fp.write_text(c.replace(old_text, new_text, 1))
+        return f"Edited {path}"
     except Exception as e:
         return f"Error: {e}"
