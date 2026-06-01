@@ -11,6 +11,7 @@ from BackgroundManager import BackgroundManager
 from CronScheduler import CronScheduler
 from MessageBus import MessageBus
 from TeammateManager import TeammateManager
+from AgreementStore import AgreementStore
 
 WORKDIR = Path.cwd()
 
@@ -373,6 +374,68 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "request_shutdown",
+        "description": "请求子线程优雅的关闭",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "目标线程角色名称"},
+            },
+            "required": ["target"],
+        },
+    },
+    {
+        "name": "response_shutdown",
+        "description": "子线程对lead的关闭请求进行响应",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "请求id"},
+                "approve": {"type": "boolean", "description": "请求是否同意"},
+                "origin": {"type": "string", "description": "被请求的线程的角色名称"},
+                "response": {"type": "string", "description": "详细的响应内容"},
+            },
+            "required": ["request_id", "approve", "origin", "response"],
+        },
+    },
+    {
+        "name": "request_plan",
+        "description": "向lead请求执行一些高危计划",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "请求发起者角色名称"},
+                "plan": {"type": "string", "description": "计划内容"},
+            },
+            "required": ["origin", "plan"],
+        },
+    },
+    {
+        "name": "response_plan",
+        "description": "lead对子线程的计划请求进行响应",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "请求id"},
+                "approve": {"type": "boolean", "description": "请求是否同意"},
+                "target": {"type": "string", "description": "发起请求的线程的角色名称"},
+                "response": {"type": "string", "description": "详细的响应内容"},
+            },
+            "required": ["request_id", "approve", "target", "response"],
+        },
+    },
+    {
+        "name": "get_request",
+        "description": "根据请求id获取团队请求",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "请求ID"},
+            },
+            "required": ["request_id"],
+        },
+    },
 ]
 
 SUB_TOOLS = [
@@ -464,6 +527,91 @@ SUB_TOOLS = [
             "required": ["path", "old_text", "new_text"],
         },
     },
+    {
+        "name": "send_message",
+        "description": "向指定成员发送消息",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "发送者名称"},
+                "to": {"type": "string", "description": "接收者名称"},
+                "content": {"type": "string", "description": "消息内容"},
+                "msg_type": {
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "broadcast",
+                        "shutdown_request",
+                        "shutdown_response",
+                        "plan_approval",
+                        "plan_approval_response",
+                    ],
+                    "description": "消息类型",
+                },
+                "extra": {"type": "object", "description": "额外信息"},
+            },
+            "required": ["sender", "to", "content", "msg_type"],
+        },
+    },
+    {
+        "name": "broadcast_teammates",
+        "description": "向所有成员广播消息",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "发送者名称"},
+                "content": {"type": "string", "description": "消息内容"},
+                "teammates": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "接收者名称列表",
+                },
+            },
+            "required": ["sender", "content", "teammates"],
+        },
+    },
+    {
+        "name": "list_teammates",
+        "description": "列出团队成员",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "member_names",
+        "description": "获取团队成员名称列表",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "response_shutdown",
+        "description": "子线程对lead的关闭请求进行响应",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "请求id"},
+                "approve": {"type": "boolean", "description": "请求是否同意"},
+                "origin": {"type": "string", "description": "被请求的线程的角色名称"},
+                "response": {"type": "string", "description": "详细的响应内容"},
+            },
+            "required": ["request_id", "approve", "origin", "response"],
+        },
+    },
+    {
+        "name": "request_plan",
+        "description": "向lead请求执行一些高危计划",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "请求发起者角色名称"},
+                "plan": {"type": "string", "description": "计划内容"},
+            },
+            "required": ["origin", "plan"],
+        },
+    },
 ]
 
 
@@ -477,6 +625,7 @@ def build_tool_handlers(
     cron_scheduler: CronScheduler,
     team_manager: TeammateManager,
     message_bus: MessageBus,
+    agreement_store: AgreementStore,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -517,10 +666,26 @@ def build_tool_handlers(
             kw["sender"], kw["content"], kw["teammates"]
         ),
         "member_names": lambda **kw: team_manager.member_names(),
+        "request_shutdown": lambda **kw: agreement_store.request_shutdown(kw["target"]),
+        "response_shutdown": lambda **kw: agreement_store.response_shutdown(
+            kw["request_id"], kw["approve"], kw["origin"], kw["response"]
+        ),
+        "request_plan": lambda **kw: agreement_store.request_plan(
+            kw["origin"], kw["plan"]
+        ),
+        "response_plan": lambda **kw: agreement_store.response_plan(
+            kw["request_id"], kw["approve"], kw["target"], kw["response"]
+        ),
+        "get_request": lambda **kw: agreement_store.get_request(kw["request_id"]),
     }
 
 
-def build_sub_tool_handlers(TODO: TODO_MANAGER) -> dict[str, Callable[..., str]]:
+def build_sub_tool_handlers(
+    TODO: TODO_MANAGER,
+    team_manager: TeammateManager,
+    message_bus: MessageBus,
+    agreement_store: AgreementStore,
+) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
         "calculator": lambda **kw: calculator(kw["expression"]),
@@ -529,6 +694,20 @@ def build_sub_tool_handlers(TODO: TODO_MANAGER) -> dict[str, Callable[..., str]]
         "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
         "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
         "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+        "list_teammates": lambda **kw: team_manager.list_team(),
+        "send_message": lambda **kw: message_bus.send(
+            kw["sender"], kw["to"], kw["content"], kw["msg_type"], kw.get("extra")
+        ),
+        "broadcast_teammates": lambda **kw: message_bus.broadcast(
+            kw["sender"], kw["content"], kw["teammates"]
+        ),
+        "member_names": lambda **kw: team_manager.member_names(),
+        "response_shutdown": lambda **kw: agreement_store.response_shutdown(
+            kw["request_id"], kw["approve"], kw["origin"], kw["response"]
+        ),
+        "request_plan": lambda **kw: agreement_store.request_plan(
+            kw["origin"], kw["plan"]
+        ),
     }
 
 

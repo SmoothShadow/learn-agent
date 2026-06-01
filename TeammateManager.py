@@ -7,6 +7,7 @@ from anthropic import Anthropic
 from MessageBus import MessageBus
 from tools import build_sub_tool_handlers, SUB_TOOLS
 from todo_manager import TODO_MANAGER
+from AgreementStore import AgreementStore
 
 
 @dataclass
@@ -15,12 +16,7 @@ class TeammateManagerConfig:
     client: Anthropic
     model: str
     bus: MessageBus
-
-
-# 待办事项
-TODO = TODO_MANAGER()
-
-SUB_TOOL_HANDLERS = build_sub_tool_handlers(TODO)
+    agreement_store: AgreementStore
 
 
 class TeammateManager:
@@ -29,6 +25,14 @@ class TeammateManager:
         self.work_dir = config.work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.team = self._load_config()
+        # 待办事项
+        TODO = TODO_MANAGER()
+        self.SUB_TOOL_HANDLERS = build_sub_tool_handlers(
+            TODO,
+            team_manager=self,
+            message_bus=self.config.bus,
+            agreement_store=self.config.agreement_store,
+        )
 
     def _save_config(self):
         file_path = self.work_dir / "config.json"
@@ -73,12 +77,35 @@ class TeammateManager:
         member = self._find_member(name)
         for _ in range(50):
             for line in self.config.bus.read_inbox(name):
+                msg_type = line.get("type")
+                request_id = line.get("request_id")
                 messages.append(
                     {
                         "role": "user",
-                        "content": f"[from={line.get('from')}, type={line.get('type')}] {line.get('content')}",
+                        "content": f"[from={line.get('from')}, type={msg_type}] {line.get('content')}",
                     }
                 )
+                if msg_type == "shutdown_request":
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"这不是普通聊天，而是关闭协议。"
+                                f"请完成必要收尾后，调用 response_shutdown "
+                                f"并传入 request_id='{request_id}', origin='{name}'。"
+                            ),
+                        }
+                    )
+                elif msg_type == "plan_approval_response":
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"这不是普通聊天，而是计划审批结果。"
+                                f"请根据 request_id='{request_id}' 的审批结果决定是否继续执行。"
+                            ),
+                        }
+                    )
             try:
                 response = self.config.client.messages.create(
                     model=self.config.model,
@@ -93,7 +120,7 @@ class TeammateManager:
                 result = []
                 for block in response.content:
                     if block.type == "tool_use":
-                        handler = SUB_TOOL_HANDLERS.get(block.name)
+                        handler = self.SUB_TOOL_HANDLERS.get(block.name)
                         output = handler(**block.input)
                         result.append(
                             {
