@@ -12,6 +12,7 @@ from CronScheduler import CronScheduler
 from MessageBus import MessageBus
 from TeammateManager import TeammateManager
 from AgreementStore import AgreementStore
+from ClaimablePredicate import ClaimablePredicate
 
 WORKDIR = Path.cwd()
 
@@ -175,6 +176,11 @@ TOOLS = [
                                 "items": {"type": "string"},
                                 "description": "依赖的任务主题列表",
                             },
+                            "allowed_roles": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "允许哪些角色接取这个任务",
+                            },
                         },
                         "required": ["subject", "description", "owner", "status"],
                     },
@@ -195,8 +201,12 @@ TOOLS = [
                     "enum": ["pending", "in_progress", "completed", "deleted"],
                     "description": "任务状态",
                 },
+                "name": {
+                    "type": "string",
+                    "description": "执行此操作的成员名称",
+                },
             },
-            "required": ["task_id", "status"],
+            "required": ["task_id", "status", "role"],
         },
     },
     {
@@ -612,6 +622,95 @@ SUB_TOOLS = [
             "required": ["origin", "plan"],
         },
     },
+    {
+        "name": "load_all",
+        "description": "加载所有任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "claim_task",
+        "description": "子代理根据自己的角色主动接取一个可接取和可执行的任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "当前成员名称"},
+                "role": {"type": "string", "description": "当前成员角色"},
+            },
+            "required": ["name", "role"],
+        },
+    },
+    {
+        "name": "update_claim_record",
+        "description": "更新任务接取记录",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "object",
+                    "description": "任务对象",
+                    "properties": {
+                        "subject": {"type": "string", "description": "任务主题"},
+                        "description": {
+                            "type": "string",
+                            "description": "任务描述",
+                        },
+                        "owner": {"type": "string", "description": "分配给谁执行"},
+                        "status": {
+                            "type": "string",
+                            "enum": [
+                                "pending",
+                                "in_progress",
+                                "completed",
+                                "deleted",
+                            ],
+                            "description": "当前状态",
+                        },
+                        "depends_on_subjects": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "依赖的任务主题列表",
+                        },
+                        "allowed_roles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "允许哪些角色接取这个任务",
+                        },
+                    },
+                },
+                "name": {"type": "string", "description": "当前角色名称"},
+                "status": {"type": "string", "description": "领取状态"},
+                "claim_source": {
+                    "type": "string",
+                    "enum": ["auto", "manual"],
+                    "description": "接取方式",
+                },
+            },
+            "required": ["task", "name", "status", "claim_source"],
+        },
+    },
+    {
+        "name": "update_task",
+        "description": "更新文件夹中的任务列表的状态",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "任务id"},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed", "deleted"],
+                    "description": "任务状态",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "执行此操作的成员名称",
+                },
+            },
+            "required": ["task_id", "status", "role"],
+        },
+    },
 ]
 
 
@@ -641,7 +740,7 @@ def build_tool_handlers(
         ),
         "create_tasks": lambda **kw: task_manager.create_tasks(kw["tasks"]),
         "update_task": lambda **kw: task_manager.update_task(
-            kw["task_id"], kw["status"]
+            kw["task_id"], kw["status"], kw["name"]
         ),
         "get_task": lambda **kw: task_manager.get_task(kw["task_id"]),
         "load_all": lambda **kw: task_manager.load_all(),
@@ -685,6 +784,8 @@ def build_sub_tool_handlers(
     team_manager: TeammateManager,
     message_bus: MessageBus,
     agreement_store: AgreementStore,
+    task_manager: TaskManager,
+    claimable_predicate: ClaimablePredicate,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -707,6 +808,16 @@ def build_sub_tool_handlers(
         ),
         "request_plan": lambda **kw: agreement_store.request_plan(
             kw["origin"], kw["plan"]
+        ),
+        "load_all": lambda **kw: task_manager.load_all(),
+        "claim_task": lambda **kw: claimable_predicate.claim_task(
+            kw["name"], kw["role"]
+        ),
+        "update_claim_record": lambda **kw: claimable_predicate.update_claim_record(
+            kw["task"], kw["name"], kw["status"], kw["claim_source"]
+        ),
+        "update_task": lambda **kw: task_manager.update_task(
+            kw["task_id"], kw["status"], kw["name"]
         ),
     }
 

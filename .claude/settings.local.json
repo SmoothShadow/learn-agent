@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:learn.shareai.run)",
+      "Bash(curl *)",
+      "Bash(python *)"
+    ]
+  }
+}

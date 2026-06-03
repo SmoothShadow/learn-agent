@@ -34,6 +34,7 @@ class TaskManager:
             "owner": task.get("owner", ""),
             "status": task.get("status", "pending"),
             "depends_on_subjects": task.get("depends_on_subjects", []),
+            "allowed_roles": task.get("allowed_roles"),
         }
         file_path = self.config.task_dir / f"{task.get('id')}.json"
         file_path.write_text(json.dumps(task, ensure_ascii=False, indent=2))
@@ -62,11 +63,13 @@ class TaskManager:
             task_file.write_text(json.dumps(task_content, ensure_ascii=False, indent=2))
             # return f"Dependency added to task with ID: {task['id']}"
 
-    def update_task(self, task_id: int, status: str):
+    def update_task(self, task_id: int, status: str, name: str):
         task_file = self.config.task_dir / f"{task_id}.json"
         if not task_file.exists():
             return f"Task with ID {task_id} does not exist"
         task = json.loads(task_file.read_text())
+        if task["owner"] and task["owner"] != name:
+            return f"Task with ID {task_id} is owned by {task['owner']}"
         if task["status"] == status:
             return f"Task with ID {task_id} is already {status}"
         task["status"] = status

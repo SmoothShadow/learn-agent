@@ -8,6 +8,8 @@ from MessageBus import MessageBus
 from tools import build_sub_tool_handlers, SUB_TOOLS
 from todo_manager import TODO_MANAGER
 from AgreementStore import AgreementStore
+from ClaimablePredicate import ClaimablePredicate
+from TaskManager import TaskManager
 
 
 @dataclass
@@ -17,6 +19,8 @@ class TeammateManagerConfig:
     model: str
     bus: MessageBus
     agreement_store: AgreementStore
+    task_manager: TaskManager
+    claimable_predicate: ClaimablePredicate
 
 
 class TeammateManager:
@@ -32,6 +36,8 @@ class TeammateManager:
             team_manager=self,
             message_bus=self.config.bus,
             agreement_store=self.config.agreement_store,
+            task_manager=self.config.task_manager,
+            claimable_predicate=self.config.claimable_predicate,
         )
 
     def _save_config(self):
@@ -76,36 +82,53 @@ class TeammateManager:
         messages = [{"role": "user", "content": prompt}]
         member = self._find_member(name)
         for _ in range(50):
-            for line in self.config.bus.read_inbox(name):
-                msg_type = line.get("type")
-                request_id = line.get("request_id")
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": f"[from={line.get('from')}, type={msg_type}] {line.get('content')}",
-                    }
-                )
-                if msg_type == "shutdown_request":
+            message_box = self.config.bus.read_inbox(name)
+            if message_box:
+                for line in message_box:
+                    msg_type = line.get("type")
+                    request_id = line.get("request_id")
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"[from={line.get('from')}, type={msg_type}] {line.get('content')}",
+                        }
+                    )
+                    if msg_type == "shutdown_request":
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"这不是普通聊天，而是关闭协议。"
+                                    f"请完成必要收尾后，调用 response_shutdown "
+                                    f"并传入 request_id='{request_id}', origin='{name}'。"
+                                ),
+                            }
+                        )
+                    elif msg_type == "plan_approval_response":
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"这不是普通聊天，而是计划审批结果。"
+                                    f"请根据 request_id='{request_id}' 的审批结果决定是否继续执行。"
+                                ),
+                            }
+                        )
+            else:
+                result = self.config.claimable_predicate.claim_task(name, role)
+                if result:
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                f"这不是普通聊天，而是关闭协议。"
-                                f"请完成必要收尾后，调用 response_shutdown "
-                                f"并传入 request_id='{request_id}', origin='{name}'。"
+                                f"任务主题: {result.get('subject')}\n"
+                                f"任务描述: {result.get('description')}\n"
+                                f"任务执行完成后，使用update_task工具更新任务状态"
                             ),
                         }
                     )
-                elif msg_type == "plan_approval_response":
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                f"这不是普通聊天，而是计划审批结果。"
-                                f"请根据 request_id='{request_id}' 的审批结果决定是否继续执行。"
-                            ),
-                        }
-                    )
+                else:
+                    continue
             try:
                 response = self.config.client.messages.create(
                     model=self.config.model,
