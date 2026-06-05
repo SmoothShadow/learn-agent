@@ -4,23 +4,27 @@ import json
 from threading import Thread
 
 from anthropic import Anthropic
+from pydantic import InstanceOf
 from MessageBus import MessageBus
 from tools import build_sub_tool_handlers, SUB_TOOLS
 from todo_manager import TODO_MANAGER
 from AgreementStore import AgreementStore
 from ClaimablePredicate import ClaimablePredicate
 from TaskManager import TaskManager
+from WorkTreesIsolation import WorkTreesIsolation
 
 
 @dataclass
 class TeammateManagerConfig:
     work_dir: Path
+    task_dir: Path
     client: Anthropic
     model: str
     bus: MessageBus
     agreement_store: AgreementStore
     task_manager: TaskManager
     claimable_predicate: ClaimablePredicate
+    worktree_isolation: WorkTreesIsolation
 
 
 class TeammateManager:
@@ -29,6 +33,7 @@ class TeammateManager:
         self.work_dir = config.work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.team = self._load_config()
+        self.current_task_by_member = {}
         # 待办事项
         TODO = TODO_MANAGER()
         self.SUB_TOOL_HANDLERS = build_sub_tool_handlers(
@@ -38,6 +43,7 @@ class TeammateManager:
             agreement_store=self.config.agreement_store,
             task_manager=self.config.task_manager,
             claimable_predicate=self.config.claimable_predicate,
+            worktree_isolation=self.config.worktree_isolation,
         )
 
     def _save_config(self):
@@ -78,6 +84,8 @@ class TeammateManager:
         system = (
             f"You are '{name}', role: {role}, at {self.work_dir}. "
             f"Use send_message to communicate. Complete your task."
+            f"when you start task, use the worktree isolation to create a new worktree and work on it."
+            f"run commands in those lanes, then choose keep/remove for closeout."
         )
         messages = [{"role": "user", "content": prompt}]
         member = self._find_member(name)
@@ -117,13 +125,27 @@ class TeammateManager:
             else:
                 result = self.config.claimable_predicate.claim_task(name, role)
                 if result:
+                    worktree_result = self.config.worktree_isolation.create_worktree(
+                        f"{name}_{result['id']}", result["id"]
+                    )
+                    if not isinstance(worktree_result, dict):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": "创建worktree失败，请检查错误",
+                            }
+                        )
+                        continue
+                    self.set_current_task(name, result["id"])
                     messages.append(
                         {
                             "role": "user",
                             "content": (
                                 f"任务主题: {result.get('subject')}\n"
                                 f"任务描述: {result.get('description')}\n"
-                                f"任务执行完成后，使用update_task工具更新任务状态"
+                                f"worktree已创建：工作目录:{worktree_result['path']}，分支名：{worktree_result['branch']}\n"
+                                f"请在该工作目录下完成任务，任务锁定worktree状态下不允许使用bash工具，只允许使用run_bash工具执行command\n"
+                                f"任务执行完成后，使用update_task工具更新任务状态并使用closeout_worktree工具处理worktree"
                             ),
                         }
                     )
@@ -143,8 +165,24 @@ class TeammateManager:
                 result = []
                 for block in response.content:
                     if block.type == "tool_use":
+                        if block.name == "bash":
+                            bash_result = self._check_worktree(name)
+                            if bash_result:
+                                result.append(
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": block.id,
+                                        "content": f"{name} have a task, worktree is locked, please use run_bash tool to execute command",
+                                    }
+                                )
+                                continue
                         handler = self.SUB_TOOL_HANDLERS.get(block.name)
                         output = handler(**block.input)
+                        if (
+                            block.name == "closeout_worktree"
+                            and "successfully" in output
+                        ):
+                            self.clear_current_task(name)
                         result.append(
                             {
                                 "type": "tool_result",
@@ -157,11 +195,14 @@ class TeammateManager:
                 if member:
                     member["status"] = "idle"
                     self._save_config()
+                    self.clear_current_task(name)
                 return f"Error: {e}"
         if member and member["status"] not in {"shutdown"}:
             member["status"] = "idle"
             self._save_config()
+            self.clear_current_task(name)
             return f"{name} completed task"
+        self.clear_current_task(name)
         return f"{name} completed task"
 
     def list_team(self):
@@ -173,3 +214,23 @@ class TeammateManager:
 
     def member_names(self):
         return [member["name"] for member in self.team["members"]]
+
+    def set_current_task(self, member_name: str, task_id: str):
+        self.current_task_by_member[member_name] = task_id
+
+    def clear_current_task(self, member_name: str):
+        self.current_task_by_member[member_name] = ""
+
+    def _check_worktree(self, name: str) -> bool:
+        """检查任务是否绑定工作树"""
+        task_id = self.current_task_by_member.get(name)
+        if not task_id:
+            return False
+        task_path = self.config.task_dir / f"{task_id}.json"
+        if not task_path.exists():
+            return False
+        task = json.loads(task_path.read_text())
+        if task["worktree_state"] == "active":
+            return True
+        else:
+            return False

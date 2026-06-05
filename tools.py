@@ -13,6 +13,7 @@ from MessageBus import MessageBus
 from TeammateManager import TeammateManager
 from AgreementStore import AgreementStore
 from ClaimablePredicate import ClaimablePredicate
+from WorkTreesIsolation import WorkTreesIsolation
 
 WORKDIR = Path.cwd()
 
@@ -23,7 +24,9 @@ TOOLS = [
         "description": "Run a shell command.",
         "input_schema": {
             "type": "object",
-            "properties": {"command": {"type": "string"}},
+            "properties": {
+                "command": {"type": "string"},
+            },
             "required": ["command"],
         },
     },
@@ -206,7 +209,7 @@ TOOLS = [
                     "description": "执行此操作的成员名称",
                 },
             },
-            "required": ["task_id", "status", "role"],
+            "required": ["task_id", "status", "name"],
         },
     },
     {
@@ -446,6 +449,53 @@ TOOLS = [
             "required": ["request_id"],
         },
     },
+    {
+        "name": "create_worktree",
+        "description": "创建一个隔离worktree环境来执行任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "worktree名称"},
+                "task_id": {"type": "string", "description": "任务ID"},
+            },
+            "required": ["name", "task_id"],
+        },
+    },
+    {
+        "name": "run_bash",
+        "description": "执行任务时在worktree隔离环境下执行bash指令",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "array",
+                    "description": "bash指令数组",
+                    "items": {"type": "string", "description": "command指令参数"},
+                },
+                "task_id": {"type": "string", "description": "任务ID"},
+            },
+            "required": ["command", "task_id"],
+        },
+    },
+    {
+        "name": "closeout_worktree",
+        "description": "任务完成时删除worktree或保留以便review",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "任务ID"},
+                "action": {
+                    "type": "string",
+                    "enum": ["keep", "remove"],
+                    "description": "保留或关闭worktree",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "选择某个action的依据或理由",
+                },
+            },
+        },
+    },
 ]
 
 SUB_TOOLS = [
@@ -454,7 +504,9 @@ SUB_TOOLS = [
         "description": "Run a shell command.",
         "input_schema": {
             "type": "object",
-            "properties": {"command": {"type": "string"}},
+            "properties": {
+                "command": {"type": "string"},
+            },
             "required": ["command"],
         },
     },
@@ -708,7 +760,54 @@ SUB_TOOLS = [
                     "description": "执行此操作的成员名称",
                 },
             },
-            "required": ["task_id", "status", "role"],
+            "required": ["task_id", "status", "name"],
+        },
+    },
+    {
+        "name": "create_worktree",
+        "description": "创建一个隔离worktree环境来执行任务",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "worktree名称"},
+                "task_id": {"type": "string", "description": "任务ID"},
+            },
+            "required": ["name", "task_id"],
+        },
+    },
+    {
+        "name": "run_bash",
+        "description": "执行任务时在worktree隔离环境下执行bash指令",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "array",
+                    "description": "bash指令数组",
+                    "items": {"type": "string", "description": "command指令参数"},
+                },
+                "task_id": {"type": "string", "description": "任务ID"},
+            },
+            "required": ["command", "task_id"],
+        },
+    },
+    {
+        "name": "closeout_worktree",
+        "description": "任务完成时删除worktree或保留以便review",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "任务ID"},
+                "action": {
+                    "type": "string",
+                    "enum": ["keep", "remove"],
+                    "description": "保留或关闭worktree",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "选择某个action的依据或理由",
+                },
+            },
         },
     },
 ]
@@ -725,6 +824,7 @@ def build_tool_handlers(
     team_manager: TeammateManager,
     message_bus: MessageBus,
     agreement_store: AgreementStore,
+    worktree_isolation: WorkTreesIsolation,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -776,6 +876,15 @@ def build_tool_handlers(
             kw["request_id"], kw["approve"], kw["target"], kw["response"]
         ),
         "get_request": lambda **kw: agreement_store.get_request(kw["request_id"]),
+        "create_worktree": lambda **kw: worktree_isolation.create_worktree(
+            kw["name"], kw["task_id"]
+        ),
+        "run_bash": lambda **kw: worktree_isolation.run_bash(
+            kw["command"], kw["task_id"]
+        ),
+        "closeout_worktree": lambda **kw: worktree_isolation.closeout_worktree(
+            kw["task_id"], kw["action"], kw["reason"]
+        ),
     }
 
 
@@ -786,6 +895,7 @@ def build_sub_tool_handlers(
     agreement_store: AgreementStore,
     task_manager: TaskManager,
     claimable_predicate: ClaimablePredicate,
+    worktree_isolation: WorkTreesIsolation,
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -818,6 +928,15 @@ def build_sub_tool_handlers(
         ),
         "update_task": lambda **kw: task_manager.update_task(
             kw["task_id"], kw["status"], kw["name"]
+        ),
+        "create_worktree": lambda **kw: worktree_isolation.create_worktree(
+            kw["name"], kw["task_id"]
+        ),
+        "run_bash": lambda **kw: worktree_isolation.run_bash(
+            kw["command"], kw["task_id"]
+        ),
+        "closeout_worktree": lambda **kw: worktree_isolation.closeout_worktree(
+            kw["task_id"], kw["action"], kw["reason"]
         ),
     }
 
