@@ -13,6 +13,7 @@ class SystemPromptConfig:
     skill_loader: SKILL_REGISTRY
     memory_mgr: MemoryManager
     model: str
+    assemble_tool_pool: callable
 
 
 class SystemPromptBuilder:
@@ -32,6 +33,7 @@ class SystemPromptBuilder:
         self.skill_loader = config.skill_loader
         self.memory_mgr = config.memory_mgr
         self.model = config.model
+        self.assemble_tool_pool = config.assemble_tool_pool
 
     def _build_core(self) -> str:
         return (
@@ -42,13 +44,13 @@ class SystemPromptBuilder:
 
     def _build_tools(self) -> str:
         tools_section = ""
-        for tool in self.tools:
+        for tool in self.assemble_tool_pool()["tools"]:
             name = tool.get("name")
             description = tool.get("description")
-            schemua = []
+            schema = []
             for key in tool.get("input_schema", {}).get("properties", {}):
-                schemua.append(key)
-            tools_section += f"- {name}(params: {', '.join(schemua)}): {description} \n"
+                schema.append(key)
+            tools_section += f"- {name}(params: {', '.join(schema)}): {description} \n"
         return f"# Tools\n{tools_section}"
 
     def _build_skills(self) -> str:
@@ -75,7 +77,7 @@ class SystemPromptBuilder:
         project_md = self.workdir / "CLAUDE.md"
         if project_md.exists():
             claude_md_section += (
-                f"## From {project_md}:{project_md.read_text().strip()}\n"
+                f"## From {project_md}\n:{project_md.read_text().strip()}\n"
             )
         return f"# CLAUDE.md\n{claude_md_section}"
 

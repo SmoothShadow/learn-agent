@@ -14,9 +14,10 @@ from TeammateManager import TeammateManager
 from AgreementStore import AgreementStore
 from ClaimablePredicate import ClaimablePredicate
 from WorkTreesIsolation import WorkTreesIsolation
+from mcpTools import connect_mcp, load_all_mcp
+from MCPClient import MCPClient
 
 WORKDIR = Path.cwd()
-
 
 TOOLS = [
     {
@@ -496,6 +497,17 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "connect_mcp",
+        "description": f"连接MCP服务器,包含{','.join(load_all_mcp().keys())}",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "MCP服务器名称"},
+            },
+            "required": ["name"],
+        },
+    },
 ]
 
 SUB_TOOLS = [
@@ -825,6 +837,7 @@ def build_tool_handlers(
     message_bus: MessageBus,
     agreement_store: AgreementStore,
     worktree_isolation: WorkTreesIsolation,
+    mcp_clients: dict[str, MCPClient]
 ) -> dict[str, Callable[..., str]]:
     return {
         "bash": lambda **kw: run_bash(kw["command"]),
@@ -885,6 +898,7 @@ def build_tool_handlers(
         "closeout_worktree": lambda **kw: worktree_isolation.closeout_worktree(
             kw["task_id"], kw["action"], kw["reason"]
         ),
+        "connect_mcp": lambda **kw: connect_mcp(kw["name"], mcp_clients),
     }
 
 
@@ -939,7 +953,6 @@ def build_sub_tool_handlers(
             kw["task_id"], kw["action"], kw["reason"]
         ),
     }
-
 
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()

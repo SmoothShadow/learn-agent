@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:learn.shareai.run)",
       "Bash(curl *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)"
     ]
   }
 }
