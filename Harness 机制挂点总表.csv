@@ -1,0 +1,21 @@
+机制,属于哪个阶段,解决什么问题,为什么挂在这里
+sessionStart,用户输入前/agent 初始化时,会话启动时触发的 hook,初始化审计、启动日志、环境准备
+memory,llm前,将跨会话上下文拼入prompt,必须在调用前将上下文加入prompt，才能让模型用到
+tool pool,llm前,将mcp和本地工具拍平整合到一起,模型调用前生成完整工具表才能知道有哪些工具可用
+skills,llm前,把skills注入prompt,给模型提供可用技能目录 / 能力索引
+messagebus,llm前,将团队成员发送的消息注入prompt,本质是待处理任务或通知，需要告知模型注入messages
+background notification,llm前,将后台任务通知拼入prompt,后台任务的通知必须调用前拼入messages，模型才能处理
+cron queue,llm前,将定时任务拼入prompt,messages添加到期的任务，模型才能处理按时处理
+auto compact,llm前,压缩上下文,调用前压缩上下文，才能限制会话不超过模型最大input
+recovery,LLM 调用后 / LLM 调用异常时,max_tokens、prompt too long、网络错误、429/529 等恢复,因为 recovery 处理的是模型调用结果或模型调用失败，不是工具执行问题
+pretoolusehook,llm后，调用工具前,调用工具使用前的钩子,必须在工具使用前拦截
+permission check,llm后，调用工具前,调用工具前进行权限检查,必须在工具使用前拦截，判断工具是否有权限使用
+tool execution,llm后,调用工具,使用什么工具，input是什么由模型返回
+manual compact,llm后，特殊控制流分支,手动压缩上下文,模型感知到上下文过长时，会主动要求压缩上下文
+spawn_teammate,llm后,复杂任务创建子agent多线程完成,创建子代理本质是一种工具，是提供给模型的能力
+agreementStore,llm后,父子agent的请求和审批,请求和审批也是一种工具，在模型调用前append到messages后需要提供工具供其处理
+taskmanage,llm后,lead分发任务,本质是工具能力
+claimtask,llm后,子成员主动认领任务,本质是工具能力
+worktree isolation,"llm后, claimtask后",认领任务后创建独立空间给子agent执行,认领完任务才能分割
+stop,本轮没有 tool_use / 循环结束时,停止循环，统一收尾、统计、清理,因为只有当本轮不再继续工具调用时，才能进入 stop 收尾阶段
+posttoolusehook,llm后，调用工具后,调用工具使用后的钩子,在工具使用后才能调用

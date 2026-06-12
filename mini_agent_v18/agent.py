@@ -387,6 +387,7 @@ def agent_loop(messages: list, perms: PermissionManager):
         "round_since_todo": 0,
     }
     while True:
+        # 阶段4 llm前-完成工具池组装，系统提示词组装，定时任务检查，后台任务消息提醒，检查上下文上次决定是否压缩，检查消息盒子是否有请求和之前请求的回应
         # tool_pool
         tool_bundle = assemble_tool_pool()
 
@@ -469,6 +470,7 @@ def agent_loop(messages: list, perms: PermissionManager):
                 max_tokens=8000,
             )
             messages.append({"role": "assistant", "content": response.content})
+            # 阶段5 llm后 工具调用前 检查是否有max_tokens错误是否需要恢复，stop原因是否包含tool_use
             if response.stop_reason == "max_tokens":
                 error_info = recovery.choose_recovery(response.stop_reason, "")
                 error_type = error_info.get("kind", "")
@@ -502,6 +504,7 @@ def agent_loop(messages: list, perms: PermissionManager):
 
             results = []
             manual_compact = False
+            # 阶段6 工具调用前，检查权限，hook调用
             for block in response.content:
                 if block.type == "tool_use":
 
@@ -523,7 +526,7 @@ def agent_loop(messages: list, perms: PermissionManager):
                         messages.append(
                             {"role": "user", "content": hook_result["message"]}
                         )
-
+                    # 特殊控制流
                     if block.name == "compact":
                         manual_compact = True
                         print("压缩中·······")
@@ -549,7 +552,7 @@ def agent_loop(messages: list, perms: PermissionManager):
                                 "content": str(output),
                             }
                         )
-
+                        # 阶段7 工具调用后 hook钩子调用
                         # PostToolUse hook
                         hook_result = run_hooks(
                             "PostToolUse",
@@ -600,6 +603,7 @@ def agent_loop(messages: list, perms: PermissionManager):
 
 
 if __name__ == "__main__":
+    # 阶段1 agent初始化 memory组装，hook调用，mode模式
     # Load existing memories at session start
     memory_mgr.load_all()
     mem_count = len(memory_mgr.memories)
@@ -623,6 +627,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
+            # 阶段2 用户输入
             query = input("\033[35ms20 completed>>> \033[0m")
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
@@ -663,6 +668,7 @@ if __name__ == "__main__":
             continue
 
         history.append({"role": "user", "content": query})
+        # 阶段3 进入loop循环
         agent_loop(history, perms)
         response_content = history[-1]["content"]
         if isinstance(response_content, list):
